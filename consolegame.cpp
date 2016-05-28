@@ -10,6 +10,8 @@ const Square Out = 4;
 const Square Empty = 0;
 const Square White = 1;
 const Square Black = 2;
+const int simple_sum[] = { 0,1,-1,0 };
+const int empty_sum[] = { 1,0,0,0 };
 
 typedef Square BoardArray[100];
 typedef Square BoardLineArray[10];
@@ -58,7 +60,7 @@ inline Square other_color(Square c) { return (Black + White) ^ c; }
 //note white is positive, black negative
 //add number of pieces to this
 int Values[256];
-static int values_by_color[] = { -64,-32,-16,-8,0,8,16,32,64 };
+const int values_by_color[] = { -64,-32,-16,-8,0,8,16,32,64 };
 void initValues()
 {
 	for (int i = 0;i < 256;++i) {
@@ -142,8 +144,8 @@ public:
 		board[44] = board[55] = White;
 		board[45] = board[54] = Black;
 	}
-	bool move(Square *&undo, int pos, Square color) {
-		return ::move(undo, pos, color, board, Directions);
+	bool move(Square *&undo, int pos, Square color,bool check=false) {
+		return ::move(undo, pos, color, board, Directions,check);
 	}
 	void undo(Square *&undo, Square *board)
 	{
@@ -152,6 +154,7 @@ public:
 	BoardArray board;
 	void print()
 	{
+		int b = 0, w = 0;
 		const char *p = ".*Ox#";
 		printf("     1 2 3 4 5 6 7 8\n");
 		for (int i = 0;i < 100;++i) {
@@ -160,11 +163,15 @@ public:
 				else printf(" %i ", i / 10);
 			}
 			putchar(p[board[i]]);putchar(' ');
+			if (board[i] == Black) ++b;
+			else if (board[i] == White) ++w;
 			if (i % 10 == 9) putchar('\n');
 		}
+		printf("%i black pieces, %i white pieces\n",b,w);
 	}
 
-	int alphabeta(int &move_at,int depth, int alpha, int beta, Square color, Square root_color);
+	int alphabeta(int &move_at,int depth, int alpha, int beta, Square color, Square root_color,bool use_move_count);
+	int endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool passed=false);
 	bool next_move(int &move_number,int &move_at,Square color)
 	{
 		//make killer move lru later
@@ -180,11 +187,11 @@ public:
 		return false;
 	}
 
-	int find_move( int depth, Square color )
+	int find_move(int depth, Square color, bool use_move_count);
+	bool can_move(Square color)
 	{
-		int moveAt=0;
-		alphabeta(moveAt,depth, -INT_MAX, INT_MAX, color,color);
-		return moveAt;
+		for (int p = 11;p <= 88;++p) if (move(undo_buffer, p, color, true)) return true;
+		return false;
 	}
 
 	void input(Square color,const char *command=NULL)
@@ -194,7 +201,7 @@ public:
 			print();
 			if (color == White) fputs("White's", stdout);
 			else fputs("Black's", stdout);
-			fputs(" move (p for pass, u undo, a[n] auto):", stdout);
+			fputs(" move (p for pass, u undo, a[n] auto, b[n] alt auto):", stdout);
 			if (command) strcpy(buf, command);
 			else fgets(buf, sizeof(buf) - 1, stdin);
 			int i = -1;
@@ -202,7 +209,16 @@ public:
 			if (buf[0] == 'p') return;
 
 			if (buf[0] == 'a') {
-				int m = find_move(buf[1] - '0', color);
+				int m = find_move(buf[1] - '0', color,false);
+				printf("move at %i\n", m);
+				if (!move(undo_buffer, m, color)) {
+					printf("pass.\n");
+				}
+				return;
+
+			}
+			if (buf[0] == 'b') {
+				int m = find_move(buf[1] - '0', color, true);
 				printf("move at %i\n", m);
 				if (!move(undo_buffer, m, color)) {
 					printf("pass.\n");
@@ -297,14 +313,28 @@ public:
 		for (int i = 1;i <= 8;++i) delete [] safety[i - 1];
 	}
 	bool move(Square *&undo, int pos, Square color, bool check=false) {
-		return ::move(undo, pos, color, board, LineDirections);
+		return ::move(undo, pos, color, board, LineDirections,check);
+
 	}
 	void undo(Square *&undo)
 	{
 		::undo(undo, board);
 	}
-	//{}{}{} corner not valued properly!!!
-	int find_value( BoardArray in,Square root_color, bool display=false)
+
+	int find_empty(BoardArray in)
+	{
+		int sum = 0;
+		for (int i = 11;i <= 88;++i) sum += empty_sum[in[i]];
+		return sum;
+	}
+	int find_simple_value(BoardArray in, Square root_color)
+	{
+		int sum = 0;
+		for (int i = 11;i <= 88;++i) sum += simple_sum[in[i]];
+		if (root_color == Black) return -sum;
+		return sum;
+	}
+	int find_value( BoardArray in,Square root_color,bool use_move_count ,bool display)
 	{
 		for (int i = 11;i <= 88;++i) aValuationArray[i] = 0;
 		for (int i = 0;Valuations[i].pos; ++i) {
@@ -323,7 +353,7 @@ public:
 		}
 		//at this point I should have a board of safety values to flatten
 		int sum = 0;
-		static int intrans[] = { 0,1,-1,0,0 };
+		static int intrans[] = { 0,2,-2,0,0 };
 		for (int i = 11;i <= 88;++i) sum += Values[aValuationArray[i]] + intrans[in[i]];
 		if (display) {
 			const char *p = ".*Ox#";
@@ -339,13 +369,15 @@ public:
 			}
 
 		}
-		int white_moves = 0, black_moves = 0;
-		for (int p = 11;p <= 88;++p) if (move(undo_buffer, p, White, true))white_moves += 1;
-		for (int p = 11;p <= 88;++p) if (move(undo_buffer, p, Black, true))black_moves += 1;
+		if (use_move_count) {
+			int white_moves = 0, black_moves = 0;
+			for (int p = 11;p <= 88;++p) if (::move(undo_buffer, p, White, in, Directions,true))white_moves += 3;
+			for (int p = 11;p <= 88;++p) if (::move(undo_buffer, p, Black, in, Directions, true))black_moves += 3;
 
-		if (white_moves < 2 && black_moves>2) black_moves <<= 1;
-		else if (black_moves < 2 && white_moves>2) white_moves <<= 1;
-		sum = sum + white_moves - black_moves;
+			if (white_moves < 2 && black_moves>2) black_moves <<= 2- white_moves;
+			else if (black_moves < 2 && white_moves>2) white_moves <<= 2- black_moves;
+			sum = sum + white_moves - black_moves;
+		}
 		if (root_color == Black) sum=-sum;
 		//? how to count options?
 		
@@ -355,10 +387,22 @@ public:
 };
 
 Valuator valuator;
-int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color)
+
+int Board::find_move(int depth, Square color, bool use_move_count)
+{
+	int empty_depth = valuator.find_empty(board);
+	int moveAt = 0;
+	if (empty_depth < 19) {
+		printf("endgame ");
+		endgame_alphabeta(moveAt, empty_depth,- INT_MAX, INT_MAX, color, color,false);
+	}else alphabeta(moveAt, depth, -INT_MAX, INT_MAX, color, color, use_move_count);
+	return moveAt;
+}
+
+int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool passed)
 {
 	if (depth == 0) {
-		return valuator.find_value(board, root_color);
+		return valuator.find_simple_value(board, root_color);
 	}
 	int at, move_number = 0;
 	int inner_move;
@@ -366,7 +410,61 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 		int v = -INT_MAX;
 		while (next_move(move_number, at, color)) {
 
-			int n = alphabeta(inner_move,depth-1,alpha, beta, other_color(color), root_color);
+			int n = endgame_alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);
+			if (n > v) {
+				v = n;
+				move_at = at;
+			}
+			if (v > alpha) {
+				alpha = v;
+			}
+
+			undo(undo_buffer, board);
+			if (beta <= alpha)break; //cut off
+		}
+		if (v == -INT_MAX) {
+			if (passed) return valuator.find_simple_value(board, root_color);
+			move_at = 0;
+			return endgame_alphabeta(inner_move, depth, alpha, beta, other_color(color), root_color,true);//passed
+		}
+		return v;
+	}
+	else {//minimizing
+		int v = INT_MAX;
+		while (next_move(move_number, at, color)) {
+			int n = endgame_alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);
+			if (n < v) {
+				v = n;
+				move_at = at;
+			}
+			if (v < beta) {
+				beta = v;
+			}
+			undo(undo_buffer, board);
+			if (beta <= alpha)break; //cut off
+		}
+		if (v == INT_MAX) {
+			if (passed) return valuator.find_simple_value(board, root_color);
+			move_at = 0;
+			return endgame_alphabeta(inner_move, depth, alpha, beta, other_color(color), root_color,true);//passed
+		}
+		move_at = at;
+		return v;
+	}
+
+};
+int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color,bool use_move_count)
+{
+	if(depth == 0) {
+		return valuator.find_value(board, root_color, use_move_count,false);
+	}
+	int at, move_number = 0;
+	int inner_move;
+	if (color == root_color) { //maximizing
+		int v = -INT_MAX;
+		while (next_move(move_number, at, color)) {
+
+			int n = alphabeta(inner_move,depth-1,alpha, beta, other_color(color), root_color,use_move_count);
 			if (n > v) {
 				v = n;
 				move_at = at;
@@ -380,14 +478,14 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 		}
 		if (v == -INT_MAX) {
 			move_at = 0;
-			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);//passed
+			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color,use_move_count);//passed
 		}
 		return v;
 	}
 	else {//minimizing
 		int v = INT_MAX;
 		while (next_move(move_number, at, color)) {
-			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);
+			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color,use_move_count);
 			if (n < v) {
 				v = n;
 				move_at = at;
@@ -400,24 +498,49 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 		}
 		if (v == INT_MAX) {
 			move_at = 0;
-			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);//passed
+			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color,use_move_count);//passed
 		}
 		move_at = at;
 		return v;
 	}
 
-}
+};
 
 int main()
 {
 	Board b;
+	bool black_passed;
+	bool white_passed;
 	do {
-		b.input(Black);
-		valuator.find_value(b.board, White, true);
-		b.input(White);
-		valuator.find_value(b.board, Black, true);
+		if (!b.can_move(Black)) {
+			if (white_passed) {
+				printf("game over\n");
+				break;
+			}
+			printf("Black must pass \n");
+			black_passed = true;
+		}
+			else {
+			b.input(Black);
+			black_passed = false;
+		}
+//		valuator.find_value(b.board, White,false, true);
+		if (!b.can_move(White)) {
+			if (black_passed) {
+				printf("game over\n");
+				break;
+			}
+			printf("White must pass \n");
+			white_passed = true;
+		}
+		else {
+			b.input(White,"b7");
+			white_passed = false;
+		}
+//		valuator.find_value(b.board, Black, false,true);
 	} while (true);
-
+	b.print();
+	getchar();
     return 0;
 }
 
