@@ -5,7 +5,10 @@
 #include <functional>
 #include <assert.h>
 
-typedef unsigned Square;
+//#define NO_OPTIMIZATION
+
+typedef uint8_t Square;
+typedef unsigned Safety;
 const Square Out = 4;
 const Square Empty = 0;
 const Square White = 1;
@@ -20,9 +23,9 @@ const int Directions[] = { 11,9,-11,-9,1,-1,10,-10,0 };
 const int LineDirections[] = { 1,-1,0 };
 
 struct ValTriple { int pos; int dir; int len; };
-int *safety[8];
+Safety *safety[8];
 const ValTriple Valuations[] =
-{ 
+{
 	{ 81,11,1 },{ 81,1,8 },
 	{ 71,11,2 },{ 71,1,8 },
 	{ 61,11,3 },{ 61,1,8 },
@@ -45,10 +48,30 @@ const ValTriple Valuations[] =
 	{ 68,9,3 },
 	{ 78,9,2 },
 	{ 88,9,1 },
-	{0,0,0}
+	{ 0,0,0 }
 };
-                    /*x,0,x,x,x,x,x,x,x,2,4,6*/
-const int shifts[] = {-1,0,-1,-1,-1,-1,-1,-1,-1,2,4,6};
+
+Safety compress_a[256];
+Safety compress_b[256];
+void init_compress()
+{
+	for (int c=0;c<256;++c)
+		compress_a[c] = (c & 3) + ((((c & 0xc) * 12288) + ((c & 0x30) * 9216) 
+			+ ((c & 0xc0) * 6912)) >> 14);
+
+	for (int c = 256;c < 65536;c+=256)
+		compress_b[c>>8] = ((((c & 0x300) * 5184)
+			+ ((c & 0xc00) * 3888) + ((c & 0x3000) * 2916) + ((c & 0xc000) * 2187)) >> 14);
+}
+//reduce cache pressure by converting base 3 index to compressed form
+inline Safety compress3(int c)
+{
+	return compress_a[c&255]+compress_b[c>>8];
+}
+
+
+/*x,0,x,x,x,x,x,x,x,2,4,6*/
+const int shifts[] = { -1,0,-1,-1,-1,-1,-1,-1,-1,2,4,6 };
 typedef int ValuationArray[100];
 ValuationArray aValuationArray;
 
@@ -74,13 +97,15 @@ void initValues()
 				if (count_black) {
 					--count_black;
 					++count_ambig;
-				}else ++count_white;
+				}
+				else ++count_white;
 				break;
 			case 2:
 				if (count_white) {
 					--count_white;
 					++count_ambig;
-				}else ++count_black;
+				}
+				else ++count_black;
 				break;
 			case 3:
 				++count_ambig;
@@ -91,7 +116,7 @@ void initValues()
 	}
 }
 
-bool move(Square *&undo, int pos, Square color,Square *board, const int *directions, bool check = false)
+bool move(Square *&undo, int pos, Square color, Square *board, const int *directions, bool check = false)
 {
 	if (board[pos] != Empty) return false;
 	Square other = other_color(color);
@@ -133,19 +158,38 @@ void undo(Square *&undo, Square *board)
 	undo = u;
 }
 
+static int blacklru[64] = {
+	11,18,81,88,
+	13,16,38,68,86,83,61,31,
+	14,15,48,58,84,85,41,51,
+	33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+	23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+	12,21,17,28,78,87,82,71,
+	22,27,77,72
+};
+static int whitelru[64] = {
+	11,18,81,88,
+	13,16,38,68,86,83,61,31,
+	14,15,48,58,84,85,41,51,
+	33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+	23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+	12,21,17,28,78,87,82,71,
+	22,27,77,72
+};
+
 
 class Board {
 public:
 	Board() {
 		for (int i = 0;i < 100;++i) board[i] = Empty;
 		for (int i = 0;i < 9;++i) {
-			board[90-i*10]=board[99-i]=board[9+i*10]=board[i] = Out;
+			board[90 - i * 10] = board[99 - i] = board[9 + i * 10] = board[i] = Out;
 		}
 		board[44] = board[55] = White;
 		board[45] = board[54] = Black;
 	}
-	bool move(Square *&undo, int pos, Square color,bool check=false) {
-		return ::move(undo, pos, color, board, Directions,check);
+	bool move(Square *&undo, int pos, Square color, bool check = false) {
+		return ::move(undo, pos, color, board, Directions, check);
 	}
 	void undo(Square *&undo, Square *board)
 	{
@@ -167,34 +211,99 @@ public:
 			else if (board[i] == White) ++w;
 			if (i % 10 == 9) putchar('\n');
 		}
-		printf("%i black pieces, %i white pieces\n",b,w);
+		printf("%i black pieces, %i white pieces\n", b, w);
 	}
 
-	int alphabeta(int &move_at,int depth, int alpha, int beta, Square color, Square root_color,bool use_move_count);
-	int endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool passed=false);
-	bool next_move(int &move_number,int &move_at,Square color)
+	int alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool use_move_count);
+	int endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool passed = false);
+
+
+#ifdef NO_OPTIMIZATION
+	bool next_move(int &move_number, int &move_at, Square color)
 	{
-		//make killer move lru later
+		if (move_number > 63) return false;
 		int at = move_at;
-		if (move_number == 0) at = 11;
-		else ++at;
-		while (!move(undo_buffer, at, color) && at <= 88) ++at;
-		if (at <= 88) {
+		do {
+			if (move_number == 64) return false;
+			at = (move_number & 7) + 11 + (move_number >> 3) * 10;
 			++move_number;
-			move_at = at;
-			return true;
-		}
-		return false;
+		} while (!move(undo_buffer, at, color));
+		move_at = at;
+		return true;
 	}
+	void killer(int move_number, Square color) {}
+#else
+	void killer2(int move_number, Square color)
+	{
+		if (move_number == 0) return;
+		int *lru;
+		if (color == White)lru = whitelru;
+		else lru = blacklru;
+		int at = lru[move_number];
+		for (int i = move_number - 1;i >= 0;--i) lru[i + 1] = lru[i];
+		lru[0] = at;
+	}
+	void killer(int move_number, Square color)
+	{
+		if (move_number <= 1) return;
+		int *lru;
+		if (color == White)lru = whitelru;
+		else lru = blacklru;
+		int at = lru[move_number];
+		int a0 = lru[0];
+		int a1 = lru[move_number >> 1];
 
+		lru[0] = at;
+		lru[move_number >> 1] = a0;
+		lru[move_number] = a1;
+	}
+	bool next_move(int &move_number, int &move_at, Square color)
+	{
+		if (move_number > 63) return false;
+		int at;
+		do {
+			if (move_number == 64) return false;
+			//at = (move_number >> 3) * 10 + (move_number & 7) + 11;
+			//++move_number;
+			if (color == White)at = whitelru[move_number++];
+			else at = blacklru[move_number++];
+		} while (!move(undo_buffer, at, color));
+		move_at = at;
+		return true;
+	}
+#endif
 	int find_move(int depth, Square color, bool use_move_count);
 	bool can_move(Square color)
 	{
 		for (int p = 11;p <= 88;++p) if (move(undo_buffer, p, color, true)) return true;
 		return false;
 	}
+	int forced_move(int & move_at, Square color)
+	{
+		int moves = 0;
+		move_at = 0;
+		for (int p = 11;p <= 88;++p) {
+			if (move(undo_buffer, p, color, true)) {
+				move_at = p;
+				if (++moves == 2) return false;
+			}
+		}
+		return true;
+	}
+	int count_moves(int & move_at, Square color)
+	{
+		int moves = 0;
+		move_at = 0;
+		for (int p = 11;p <= 88;++p) {
+			if (move(undo_buffer, p, color, true)) {
+				move_at = p;
+				++moves;
+			}
+		}
+		return moves;
+	}
 
-	void input(Square color,const char *command=NULL)
+	void input(Square color, const char *command = NULL)
 	{
 		do {
 			char buf[20];
@@ -209,7 +318,7 @@ public:
 			if (buf[0] == 'p') return;
 
 			if (buf[0] == 'a') {
-				int m = find_move(buf[1] - '0', color,false);
+				int m = find_move(buf[1] - '0', color, false);
 				printf("move at %i\n", m);
 				if (!move(undo_buffer, m, color)) {
 					printf("pass.\n");
@@ -229,7 +338,7 @@ public:
 
 			if (buf[0] == 'u') {
 				undo(undo_buffer, board);
-				
+
 				return;
 			}
 			if (i < 11 || i>99 || !move(undo_buffer, i, color)) {
@@ -247,21 +356,21 @@ public:
 
 	BoardLineArray board;
 
-	int CalcSafety(int len,int c)//note board is one input, undo_buffer another
+	int CalcSafety(int len, int c)//note board is one input, undo_buffer another
 	{
 		for (int p = 0;p < len;++p) {
 			for (int color = White; color <= Black;++color) {
-				if (board[p+1] == Empty) {
-					if (move(undo_buffer, p+1, color)) {
-						for (int s = 0;s < len;++s) c |= board[s+1] << (s + s);
+				if (board[p + 1] == Empty) {
+					if (move(undo_buffer, p + 1, color)) {
+						for (int s = 0;s < len;++s) c |= board[s + 1] << (s + s);
 						c |= CalcSafety(len, c);
 						undo(undo_buffer);
 					}
 					else {
-						board[p+1] = color;
+						board[p + 1] = color;
 						c |= color << (p + p);
 						c |= CalcSafety(len, c);
-						board[p+1] = Empty;
+						board[p + 1] = Empty;
 					}
 				}
 			}
@@ -271,7 +380,7 @@ public:
 	void CalcValuate(int len)
 	{
 		board[len + 1] = Out;
-		for (int c = 0;c < 1<<(len+len);++c) {
+		for (int c = 0;c < 1 << (len + len);++c) {
 			for (int i = 0;i < len;++i) {
 				int mask = 3 << (i + i);
 				if ((c&mask) == mask) goto cont_c;
@@ -281,39 +390,42 @@ public:
 			//do every possible move from this position, and or the results
 			//every square that isn't 3 is safe.
 			//calc safety[i-1][c]
-			safety[len-1][c] = (((c&0xaaaaaaaa)>>1)|((c & 0x55555555) << 1)|c) & CalcSafety(len,c);
+			safety[len - 1][compress3(c)] = CalcSafety(len, c);
+			//			safety[len - 1][c] = (((c & 0xaaaaaaaa) >> 1) | ((c & 0x55555555) << 1) | c) & CalcSafety(len, c);
 			//printf("safety len=%i[%x]=%x\n",len,c,safety[len - 1][c]);
 		cont_c:;
 		}
 	}
 
 	Valuator() {
+		init_compress();
 		int len = 4;
 		for (int i = 1;i <= 8;++i) {
-			safety[i - 1] = new int[len];
-			memset(safety[i - 1],0,len*sizeof(safety[i - 1][0]));
+			safety[i - 1] = new Safety[len];
+			memset(safety[i - 1], 0, len * sizeof(safety[i - 1][0]));
 			len = len * 4;
 		}
 		for (int i = 0;i < 10;++i) board[i] = Empty;
 		board[0] = board[9] = Out;
 		for (int i = 8; i >= 1;--i) CalcValuate(i);
 		initValues();
+
 		/*
 		len = 4;
 		for (int i = 1;i <= 8;++i) {
-			printf("safety of length %i\n", len);
-			for (int j = 0;j < len;++j) {
-				if (safety[i - 1][j]) fprintf(stderr,"%8x ",safety[i - 1][j]);
-			}
-			len = len * 4;
+		printf("safety of length %i\n", len);
+		for (int j = 0;j < len;++j) {
+		if (safety[i - 1][j]) fprintf(stderr,"%8x ",safety[i - 1][j]);
+		}
+		len = len * 4;
 		}
 		*/
 	}
 	~Valuator() {
-		for (int i = 1;i <= 8;++i) delete [] safety[i - 1];
+		for (int i = 1;i <= 8;++i) delete[] safety[i - 1];
 	}
-	bool move(Square *&undo, int pos, Square color, bool check=false) {
-		return ::move(undo, pos, color, board, LineDirections,check);
+	bool move(Square *&undo, int pos, Square color, bool check = false) {
+		return ::move(undo, pos, color, board, LineDirections, check);
 
 	}
 	void undo(Square *&undo)
@@ -334,19 +446,19 @@ public:
 		if (root_color == Black) return -sum;
 		return sum;
 	}
-	int find_value( BoardArray in,Square root_color,bool use_move_count ,bool display)
+	int find_value(BoardArray in, Square root_color, bool use_move_count, bool display)
 	{
 		for (int i = 11;i <= 88;++i) aValuationArray[i] = 0;
 		for (int i = 0;Valuations[i].pos; ++i) {
 			int c = 0;
 			for (int j = Valuations[i].pos, k = 1;k <= Valuations[i].len;++k, j = j + Valuations[i].dir) {
 				c = (c << 2) + in[j];
-			
+
 			}
-			c = safety[Valuations[i].len - 1][c];
+			c = safety[Valuations[i].len - 1][compress3(c)];
 			int s = shifts[Valuations[i].dir];
 			assert(s >= 0);
-			for (int j = Valuations[i].pos+Valuations[i].dir*(Valuations[i].len-1), k = 1;k <= Valuations[i].len;++k, j = j - Valuations[i].dir) {
+			for (int j = Valuations[i].pos + Valuations[i].dir*(Valuations[i].len - 1), k = 1;k <= Valuations[i].len;++k, j = j - Valuations[i].dir) {
 				aValuationArray[j] |= (c & 3) << s;
 				c >>= 2;
 			}
@@ -371,19 +483,54 @@ public:
 		}
 		if (use_move_count) {
 			int white_moves = 0, black_moves = 0;
-			for (int p = 11;p <= 88;++p) if (::move(undo_buffer, p, White, in, Directions,true))white_moves += 3;
+			for (int p = 11;p <= 88;++p) if (::move(undo_buffer, p, White, in, Directions, true))white_moves += 3;
 			for (int p = 11;p <= 88;++p) if (::move(undo_buffer, p, Black, in, Directions, true))black_moves += 3;
 
-			if (white_moves < 2 && black_moves>2) black_moves <<= 2- white_moves;
-			else if (black_moves < 2 && white_moves>2) white_moves <<= 2- black_moves;
+			if (white_moves < 2 && black_moves>2) black_moves <<= 2 - white_moves;
+			else if (black_moves < 2 && white_moves>2) white_moves <<= 2 - black_moves;
 			sum = sum + white_moves - black_moves;
+			/*
+			const int corner_fix[] = { 11,22,18,27,81,72,88,77 };
+
+			for (int i = 0;i < 8;i += 2) {
+			if (board[corner_fix[i]] == Empty && board[corner_fix[1 + i]] != Empty) {
+			if (board[corner_fix[1 + i]] == White) sum -= 700; else sum += 700;
+			}
+			}
+
+			//11 12 13 14 15 16 17 18
+			//21 22 23 24 25 26 27 28
+			//31 32 33 34 35 36 37 38
+			//41 42 43 44 45 46 47 48
+			//51 52 53 54 55 56 57 58
+			//61 62 63 64 65 66 67 68
+			//71 72 73 74 75 76 77 78
+			//81 82 83 84 85 86 87 88
+
+			const int corner_fix3[] = { 11,12,11,21,18,17,18,28,81,71,81,82,88,78,88,87 };
+
+			for (int i = 0;i < 16;i += 2) {
+			if (board[corner_fix3[i]] == Empty && board[corner_fix3[1 + i]] != Empty) {
+			if (board[corner_fix3[1 + i]] == White) sum -= 450; else sum += 450;
+			}
+			}
+
+
+			const int corner_fix2[] = { 11,18,81,88 };
+			for (int i = 0;i < 4;++i) {
+			if (board[corner_fix[i]] == Empty) {
+			if (board[corner_fix[1]] == White) sum += 1600; else sum -= 1600;
+			}
+			}
+			*/
 		}
-		if (root_color == Black) sum=-sum;
+
+		if (root_color == Black) sum = -sum;
 		//? how to count options?
-		
+
 		return sum;
 	}
-	
+
 };
 
 Valuator valuator;
@@ -392,10 +539,11 @@ int Board::find_move(int depth, Square color, bool use_move_count)
 {
 	int empty_depth = valuator.find_empty(board);
 	int moveAt = 0;
-	if (empty_depth < 19) {
+	if (empty_depth < 17) {
 		printf("endgame ");
-		endgame_alphabeta(moveAt, empty_depth,- INT_MAX, INT_MAX, color, color,false);
-	}else alphabeta(moveAt, depth, -INT_MAX, INT_MAX, color, color, use_move_count);
+		endgame_alphabeta(moveAt, empty_depth, -INT_MAX, INT_MAX, color, color, false);
+	}
+	else alphabeta(moveAt, depth, -INT_MAX, INT_MAX, color, color, use_move_count);
 	return moveAt;
 }
 
@@ -414,18 +562,21 @@ int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Squar
 			if (n > v) {
 				v = n;
 				move_at = at;
+				killer(move_number - 1, color);
 			}
 			if (v > alpha) {
 				alpha = v;
 			}
 
 			undo(undo_buffer, board);
-			if (beta <= alpha)break; //cut off
+			if (beta <= alpha) {
+				break; //cut off
+			}
 		}
 		if (v == -INT_MAX) {
 			if (passed) return valuator.find_simple_value(board, root_color);
 			move_at = 0;
-			return endgame_alphabeta(inner_move, depth, alpha, beta, other_color(color), root_color,true);//passed
+			return endgame_alphabeta(inner_move, depth, alpha, beta, other_color(color), root_color, true);//passed
 		}
 		return v;
 	}
@@ -436,27 +587,31 @@ int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Squar
 			if (n < v) {
 				v = n;
 				move_at = at;
+				killer(move_number - 1, color);
 			}
 			if (v < beta) {
 				beta = v;
 			}
 			undo(undo_buffer, board);
-			if (beta <= alpha)break; //cut off
+			if (beta <= alpha) {
+				break; //cut off
+			}
 		}
 		if (v == INT_MAX) {
 			if (passed) return valuator.find_simple_value(board, root_color);
 			move_at = 0;
-			return endgame_alphabeta(inner_move, depth, alpha, beta, other_color(color), root_color,true);//passed
+			return endgame_alphabeta(inner_move, depth, alpha, beta, other_color(color), root_color, true);//passed
 		}
 		move_at = at;
 		return v;
 	}
 
 };
-int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color,bool use_move_count)
+
+int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool use_move_count)
 {
-	if(depth == 0) {
-		return valuator.find_value(board, root_color, use_move_count,false);
+	if (depth == 0) {
+		return valuator.find_value(board, root_color, use_move_count, false);
 	}
 	int at, move_number = 0;
 	int inner_move;
@@ -464,41 +619,47 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 		int v = -INT_MAX;
 		while (next_move(move_number, at, color)) {
 
-			int n = alphabeta(inner_move,depth-1,alpha, beta, other_color(color), root_color,use_move_count);
+			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
 			if (n > v) {
 				v = n;
 				move_at = at;
+				killer(move_number - 1, color);
 			}
 			if (v > alpha) {
 				alpha = v;
 			}
 
 			undo(undo_buffer, board);
-			if (beta <= alpha)break; //cut off
+			if (beta <= alpha) {
+				break; //cut off
+			}
 		}
 		if (v == -INT_MAX) {
 			move_at = 0;
-			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color,use_move_count);//passed
+			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);//passed
 		}
 		return v;
 	}
 	else {//minimizing
 		int v = INT_MAX;
 		while (next_move(move_number, at, color)) {
-			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color,use_move_count);
+			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
 			if (n < v) {
 				v = n;
 				move_at = at;
+				killer(move_number - 1, color);
 			}
 			if (v < beta) {
 				beta = v;
 			}
 			undo(undo_buffer, board);
-			if (beta <= alpha)break; //cut off
+			if (beta <= alpha) {
+				break; //cut off
+			}
 		}
 		if (v == INT_MAX) {
 			move_at = 0;
-			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color,use_move_count);//passed
+			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);//passed
 		}
 		move_at = at;
 		return v;
@@ -521,7 +682,7 @@ int main()
 			black_passed = true;
 		}
 			else {
-			b.input(Black);
+			b.input(Black,"a:");
 			black_passed = false;
 		}
 //		valuator.find_value(b.board, White,false, true);
@@ -534,7 +695,7 @@ int main()
 			white_passed = true;
 		}
 		else {
-			b.input(White,"b7");
+			b.input(White,"a:");
 			white_passed = false;
 		}
 //		valuator.find_value(b.board, Black, false,true);
