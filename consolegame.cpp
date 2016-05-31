@@ -8,7 +8,49 @@
 //#define NO_OPTIMIZATION
 
 typedef uint8_t Square;
-typedef unsigned Safety;
+typedef uint16_t Safety;
+
+typedef Safety CompressedBoard[8];
+
+#define TranspositionTableLenLn2 21
+
+struct TranspositionEntry {
+	CompressedBoard b;
+	int value;
+	TranspositionEntry():value(0) 
+	{
+		b[0] = b[1] = b[2] = b[3] = b[4] = b[5] = b[6] = b[7] = 0;
+	}
+	static int hash(CompressedBoard o)
+	{//all numbers are prime
+		return ((1<< TranspositionTableLenLn2)-1)&(o[0] *211 +  o[1] * 223 + o[2] * 227 + o[3] * 229 + o[4] * 233 + o[5] * 239 + o[6] * 241 + o[7] * 251);
+	}
+	bool equal(CompressedBoard o) {
+		return b[0] == o[0] && b[1] == o[1] && b[2] == o[2] && b[3] == o[3] && b[4] == o[4] && b[5] == o[5] && b[6] == o[6] && b[7] == o[7];
+	}
+	static bool find_and_fill(int *&to_store, CompressedBoard o);
+};
+
+TranspositionEntry TranspositionTable[1<< TranspositionTableLenLn2];
+//static 
+bool TranspositionEntry::find_and_fill(int *&to_store, CompressedBoard o)
+{
+	int h = hash(o);
+	TranspositionEntry &t = TranspositionTable[h];
+	to_store = &t.value;
+
+	if (t.equal(o)) return true;
+	t.b[0] = o[0];
+	t.b[1] = o[1];
+	t.b[2] = o[2];
+	t.b[3] = o[3];
+	t.b[4] = o[4];
+	t.b[5] = o[5];
+	t.b[6] = o[6];
+	t.b[7] = o[7];
+	return false;
+}
+
 const Square Out = 4;
 const Square Empty = 0;
 const Square White = 1;
@@ -26,14 +68,24 @@ struct ValTriple { int pos; int dir; int len; };
 Safety *safety[8];
 const ValTriple Valuations[] =
 {
-	{ 81,11,1 },{ 81,1,8 },
-	{ 71,11,2 },{ 71,1,8 },
-	{ 61,11,3 },{ 61,1,8 },
-	{ 51,11,4 },{ 51,1,8 },
-	{ 41,11,5 },{ 41,1,8 },
-	{ 31,11,6 },{ 31,1,8 },
-	{ 21,11,7 },{ 21,1,8 },
-	{ 11,11,8 },{ 11,1,8 },{ 11,9,1 },{ 11,10,8 },
+	{ 81,1,8 },
+	{ 71,1,8 },
+	{ 61,1,8 },
+	{ 51,1,8 },
+	{ 41,1,8 },
+	{ 31,1,8 },
+	{ 21,1,8 },
+	{ 11,1,8 },
+
+	{ 81,11,1 },
+	{ 71,11,2 },
+	{ 61,11,3 },
+	{ 51,11,4 },
+	{ 41,11,5 },
+	{ 31,11,6 },
+	{ 21,11,7 },
+	{ 11,11,8 },
+	{ 11,9,1 },{ 11,10,8 },
 	{ 12,11,7 },{ 12,9,2 },{ 12,10,8 },
 	{ 13,11,6 },{ 13,9,3 },{ 13,10,8 },
 	{ 14,11,5 },{ 14,9,4 },{ 14,10,8 },
@@ -449,13 +501,33 @@ public:
 	int find_value(BoardArray in, Square root_color, bool use_move_count, bool display)
 	{
 		for (int i = 11;i <= 88;++i) aValuationArray[i] = 0;
-		for (int i = 0;Valuations[i].pos; ++i) {
+
+		CompressedBoard cb;
+		int *store_value_in_table;
+
+		for (int i = 0;i < 8; ++i) {
 			int c = 0;
 			for (int j = Valuations[i].pos, k = 1;k <= Valuations[i].len;++k, j = j + Valuations[i].dir) {
 				c = (c << 2) + in[j];
 
 			}
 			c = safety[Valuations[i].len - 1][compress3(c)];
+			cb[i] = c;
+		}
+
+		if (TranspositionEntry::find_and_fill(store_value_in_table, cb)) return *store_value_in_table;
+
+		for (int i = 0;Valuations[i].pos; ++i) {
+			int c;
+			if (i < 8) c = cb[i];
+			else {
+				c = 0;
+				for (int j = Valuations[i].pos, k = 1;k <= Valuations[i].len;++k, j = j + Valuations[i].dir) {
+					c = (c << 2) + in[j];
+
+				}
+				c = safety[Valuations[i].len - 1][compress3(c)];
+			}
 			int s = shifts[Valuations[i].dir];
 			assert(s >= 0);
 			for (int j = Valuations[i].pos + Valuations[i].dir*(Valuations[i].len - 1), k = 1;k <= Valuations[i].len;++k, j = j - Valuations[i].dir) {
@@ -527,7 +599,7 @@ public:
 
 		if (root_color == Black) sum = -sum;
 		//? how to count options?
-
+		*store_value_in_table = sum;
 		return sum;
 	}
 
@@ -682,7 +754,7 @@ int main()
 			black_passed = true;
 		}
 			else {
-			b.input(Black,"a:");
+			b.input(Black,"a8");
 			black_passed = false;
 		}
 //		valuator.find_value(b.board, White,false, true);
@@ -695,7 +767,7 @@ int main()
 			white_passed = true;
 		}
 		else {
-			b.input(White,"a:");
+			b.input(White,"a9");
 			white_passed = false;
 		}
 //		valuator.find_value(b.board, Black, false,true);
