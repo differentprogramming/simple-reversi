@@ -7,15 +7,83 @@
 #include <assert.h>
 #include <atomic>
 
-
 //#define NO_OPTIMIZATION
 
 typedef uint8_t Square;
-typedef unsigned int Safety;
+typedef uint16_t Safety;
+
+typedef Safety CompressedBoard[8];
+
+#define TranspositionTableLenLn2 24
+
+#if (TranspositionTableLenLn2 == 21)
+
+#define PRIME1 211
+#define PRIME2 223
+#define PRIME3 227
+#define PRIME4 229
+#define PRIME5 233
+#define PRIME6 239
+#define PRIME7 241
+#define PRIME8 251
+
+#else
+
+#define PRIME1 1997
+#define PRIME2 1999
+#define PRIME3 2003
+#define PRIME4 2011
+#define PRIME5 2017
+#define PRIME6 2027
+#define PRIME7 2029
+#define PRIME8 2039
+
+#endif 
+
+
+struct TranspositionEntry {
+	CompressedBoard b;
+	int value;
+	TranspositionEntry() :value(0)
+	{
+		b[0] = b[1] = b[2] = b[3] = b[4] = b[5] = b[6] = b[7] = 0;
+	}
+
+	static int hash(CompressedBoard o)
+	{//all numbers are prime
+		return ((1 << TranspositionTableLenLn2) - 1)&(o[0] * PRIME1 + o[1] * PRIME2 + o[2] * PRIME3 + o[3] * PRIME4 + o[4] * PRIME5 + o[5] * PRIME6 + o[6] * PRIME7 + o[7] * PRIME8);
+	}
+	bool equal(CompressedBoard o) {
+		return b[0] == o[0] && b[1] == o[1] && b[2] == o[2] && b[3] == o[3] && b[4] == o[4] && b[5] == o[5] && b[6] == o[6] && b[7] == o[7];
+	}
+	static bool find_and_fill(int *&to_store, CompressedBoard o);
+};
+
+TranspositionEntry TranspositionTable[1 << TranspositionTableLenLn2];
+//static 
+bool TranspositionEntry::find_and_fill(int *&to_store, CompressedBoard o)
+{
+	int h = hash(o);
+	TranspositionEntry &t = TranspositionTable[h];
+	to_store = &t.value;
+
+	if (t.equal(o)) return true;
+	t.b[0] = o[0];
+	t.b[1] = o[1];
+	t.b[2] = o[2];
+	t.b[3] = o[3];
+	t.b[4] = o[4];
+	t.b[5] = o[5];
+	t.b[6] = o[6];
+	t.b[7] = o[7];
+	return false;
+}
+
 const Square Out = 4;
 const Square Empty = 0;
 const Square White = 1;
 const Square Black = 2;
+//black p
 const int simple_sum[] = { 0,1,-1,0 };
 const int empty_sum[] = { 1,0,0,0 };
 
@@ -29,14 +97,24 @@ struct ValTriple { int pos; int dir; int len; };
 Safety *safety[8];
 const ValTriple Valuations[] =
 {
-	{ 81,11,1 },{ 81,1,8 },
-	{ 71,11,2 },{ 71,1,8 },
-	{ 61,11,3 },{ 61,1,8 },
-	{ 51,11,4 },{ 51,1,8 },
-	{ 41,11,5 },{ 41,1,8 },
-	{ 31,11,6 },{ 31,1,8 },
-	{ 21,11,7 },{ 21,1,8 },
-	{ 11,11,8 },{ 11,1,8 },{ 11,9,1 },{ 11,10,8 },
+	{ 81,1,8 },
+	{ 71,1,8 },
+	{ 61,1,8 },
+	{ 51,1,8 },
+	{ 41,1,8 },
+	{ 31,1,8 },
+	{ 21,1,8 },
+	{ 11,1,8 },
+
+	{ 81,11,1 },
+	{ 71,11,2 },
+	{ 61,11,3 },
+	{ 51,11,4 },
+	{ 41,11,5 },
+	{ 31,11,6 },
+	{ 21,11,7 },
+	{ 11,11,8 },
+	{ 11,9,1 },{ 11,10,8 },
 	{ 12,11,7 },{ 12,9,2 },{ 12,10,8 },
 	{ 13,11,6 },{ 13,9,3 },{ 13,10,8 },
 	{ 14,11,5 },{ 14,9,4 },{ 14,10,8 },
@@ -161,25 +239,337 @@ void undo(Square *&undo, Square *board)
 	undo = u;
 }
 
-static int blacklru[64] = {
-	11,18,81,88,
-	13,16,38,68,86,83,61,31,
-	14,15,48,58,84,85,41,51,
-	33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
-	23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
-	12,21,17,28,78,87,82,71,
-	22,27,77,72
-};
-static int whitelru[64] = {
-	11,18,81,88,
-	13,16,38,68,86,83,61,31,
-	14,15,48,58,84,85,41,51,
-	33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
-	23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
-	12,21,17,28,78,87,82,71,
-	22,27,77,72
-};
+static int blacklru[20][64] = { {
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} };
 
+static int whitelru[20][64] = { {
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	},{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} ,{
+		11,18,81,88,
+		13,16,38,68,86,83,61,31,
+		14,15,48,58,84,85,41,51,
+		33,34,35,36,43,44,45,46,53,54,55,56,63,64,65,66,
+		23,24,25,26,37,47,57,67,73,74,75,76,32,42,52,62,
+		12,21,17,28,78,87,82,71,
+		22,27,77,72
+	} };
+
+void increment_killers()
+{
+	for (int i = 1;i < 20;++i) {
+		if (whitelru[i][0] != 11 && whitelru[i][1] != 18) memcpy(&whitelru[i - 1][0], &whitelru[i][0], 64 * sizeof(int));
+		if (blacklru[i][0] != 11 && blacklru[i][1] != 18) memcpy(&blacklru[i - 1][0], &blacklru[i][0], 64 * sizeof(int));
+	}
+}
 
 class Board {
 public:
@@ -217,12 +607,16 @@ public:
 		printf("%i black pieces, %i white pieces\n", b, w);
 	}
 
+
+	bool collect_primary_alphabeta(int collect, int * move_collection, int depth, Square color, Square root_color, bool use_move_count);
+
 	int alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool use_move_count);
+	int movelist_alphabeta(int* move_collection, int &move_at, int depth, Square color, Square root_color, bool use_move_count);
 	int endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool passed = false);
 
 
 #ifdef NO_OPTIMIZATION
-	bool next_move(int &move_number, int &move_at, Square color)
+	bool next_move(int &move_number, int &move_at, Square color, int)
 	{
 		if (move_number > 63) return false;
 		int at = move_at;
@@ -234,24 +628,24 @@ public:
 		move_at = at;
 		return true;
 	}
-	void killer(int move_number, Square color) {}
+	void killer(int move_number, Square color, int depth) {}
 #else
-	void killer2(int move_number, Square color)
+	void killer2(int move_number, Square color, int depth)
 	{
 		if (move_number == 0) return;
 		int *lru;
-		if (color == White)lru = whitelru;
-		else lru = blacklru;
+		if (color == White)lru = whitelru[depth];
+		else lru = blacklru[depth];
 		int at = lru[move_number];
 		for (int i = move_number - 1;i >= 0;--i) lru[i + 1] = lru[i];
 		lru[0] = at;
 	}
-	void killer(int move_number, Square color)
+	void killer(int move_number, Square color, int depth)
 	{
 		if (move_number <= 1) return;
 		int *lru;
-		if (color == White)lru = whitelru;
-		else lru = blacklru;
+		if (color == White)lru = whitelru[depth];
+		else lru = blacklru[depth];
 		int at = lru[move_number];
 		int a0 = lru[0];
 		int a1 = lru[move_number >> 1];
@@ -260,7 +654,9 @@ public:
 		lru[move_number >> 1] = a0;
 		lru[move_number] = a1;
 	}
-	bool next_move(int &move_number, int &move_at, Square color)
+
+
+	bool next_move(int &move_number, int &move_at, Square color, int depth)
 	{
 		if (move_number > 63) return false;
 		int at;
@@ -268,13 +664,25 @@ public:
 			if (move_number == 64) return false;
 			//at = (move_number >> 3) * 10 + (move_number & 7) + 11;
 			//++move_number;
-			if (color == White)at = whitelru[move_number++];
-			else at = blacklru[move_number++];
+			if (color == White)at = whitelru[depth][move_number++];
+			else at = blacklru[depth][move_number++];
 		} while (!move(undo_buffer, at, color));
 		move_at = at;
 		return true;
 	}
 #endif
+	bool next_move_not_in(int *saved_moves, int &move_number, int &move_at, Square color, int depth)
+	{
+		while (next_move(move_number, move_at, color, depth)) {
+			for (int i = 1;i < *saved_moves;++i) {
+				if (saved_moves[i] == move_at) goto again;
+			}
+			return true;
+		again:;
+			undo(undo_buffer, board);
+		}
+		return false;
+	}
 	int find_move(int depth, Square color, bool use_move_count);
 	bool can_move(Square color)
 	{
@@ -293,11 +701,13 @@ public:
 		}
 		return true;
 	}
-	int count_moves(Square color)
+	int count_moves(int & move_at, Square color)
 	{
 		int moves = 0;
+		move_at = 0;
 		for (int p = 11;p <= 88;++p) {
 			if (move(undo_buffer, p, color, true)) {
+				move_at = p;
 				++moves;
 			}
 		}
@@ -348,7 +758,7 @@ public:
 			else return;
 		} while (true);
 	}
-	};
+};
 
 //note is singleton
 class Valuator
@@ -357,20 +767,21 @@ public:
 
 	BoardLineArray board;
 
-	int CalcSafety(int len, int c)//note board is one input, undo_buffer another
+	//messing with algorithm, max 4 fakes per line
+	int CalcSafety(int len, int c, int depth = 0)//note board is one input, undo_buffer another
 	{
 		for (int p = 0;p < len;++p) {
 			for (int color = White; color <= Black;++color) {
 				if (board[p + 1] == Empty) {
 					if (move(undo_buffer, p + 1, color)) {
 						for (int s = 0;s < len;++s) c |= board[s + 1] << (s + s);
-						c |= CalcSafety(len, c);
+						c |= CalcSafety(len, c, depth);
 						undo(undo_buffer);
 					}
-					else {
+					else if (depth<3) {
 						board[p + 1] = color;
 						c |= color << (p + p);
-						c |= CalcSafety(len, c);
+						c |= CalcSafety(len, c, depth + 1);
 						board[p + 1] = Empty;
 					}
 				}
@@ -444,19 +855,41 @@ public:
 	{
 		int sum = 0;
 		for (int i = 11;i <= 88;++i) sum += simple_sum[in[i]];
+		//assert(root_color == White);
+
 		if (root_color == Black) return -sum;
 		return sum;
 	}
 	int find_value(BoardArray in, Square root_color, bool use_move_count, bool display)
 	{
 		for (int i = 11;i <= 88;++i) aValuationArray[i] = 0;
-		for (int i = 0;Valuations[i].pos; ++i) {
+
+		CompressedBoard cb;
+		int *store_value_in_table;
+
+		for (int i = 0;i < 8; ++i) {
 			int c = 0;
 			for (int j = Valuations[i].pos, k = 1;k <= Valuations[i].len;++k, j = j + Valuations[i].dir) {
 				c = (c << 2) + in[j];
 
 			}
 			c = safety[Valuations[i].len - 1][compress3(c)];
+			cb[i] = c;
+		}
+
+		if (TranspositionEntry::find_and_fill(store_value_in_table, cb)) return *store_value_in_table;
+
+		for (int i = 0;Valuations[i].pos; ++i) {
+			int c;
+			if (i < 8) c = cb[i];
+			else {
+				c = 0;
+				for (int j = Valuations[i].pos, k = 1;k <= Valuations[i].len;++k, j = j + Valuations[i].dir) {
+					c = (c << 2) + in[j];
+
+				}
+				c = safety[Valuations[i].len - 1][compress3(c)];
+			}
 			int s = shifts[Valuations[i].dir];
 			assert(s >= 0);
 			for (int j = Valuations[i].pos + Valuations[i].dir*(Valuations[i].len - 1), k = 1;k <= Valuations[i].len;++k, j = j - Valuations[i].dir) {
@@ -490,45 +923,59 @@ public:
 			if (white_moves < 2 && black_moves>2) black_moves <<= 2 - white_moves;
 			else if (black_moves < 2 && white_moves>2) white_moves <<= 2 - black_moves;
 			sum = sum + white_moves - black_moves;
-			/*
-			const int corner_fix[] = { 11,22,18,27,81,72,88,77 };
+		}
+		///*
 
-			for (int i = 0;i < 8;i += 2) {
-			if (board[corner_fix[i]] == Empty && board[corner_fix[1 + i]] != Empty) {
-			if (board[corner_fix[1 + i]] == White) sum -= 700; else sum += 700;
-			}
-			}
-
-			//11 12 13 14 15 16 17 18
-			//21 22 23 24 25 26 27 28
-			//31 32 33 34 35 36 37 38
-			//41 42 43 44 45 46 47 48
-			//51 52 53 54 55 56 57 58
-			//61 62 63 64 65 66 67 68
-			//71 72 73 74 75 76 77 78
-			//81 82 83 84 85 86 87 88
-
-			const int corner_fix3[] = { 11,12,11,21,18,17,18,28,81,71,81,82,88,78,88,87 };
-
-			for (int i = 0;i < 16;i += 2) {
-			if (board[corner_fix3[i]] == Empty && board[corner_fix3[1 + i]] != Empty) {
-			if (board[corner_fix3[1 + i]] == White) sum -= 450; else sum += 450;
-			}
-			}
+		//11 12 13 14 15 16 17 18
+		//21 22 23 24 25 26 27 28
+		//31 32 33 34 35 36 37 38
+		//41 42 43 44 45 46 47 48
+		//51 52 53 54 55 56 57 58
+		//61 62 63 64 65 66 67 68
+		//71 72 73 74 75 76 77 78
+		//81 82 83 84 85 86 87 88
 
 
-			const int corner_fix2[] = { 11,18,81,88 };
-			for (int i = 0;i < 4;++i) {
-			if (board[corner_fix[i]] == Empty) {
-			if (board[corner_fix[1]] == White) sum += 1600; else sum -= 1600;
-			}
-			}
-			*/
+		const int corner_fix2[] = { 11,18,81,88 };
+		for (int i = 0;i < 4;++i) {
+			if (board[corner_fix2[i]] == White) sum += 1600; else sum -= 1600;
 		}
 
+
+		//setup scoring
+		const int corner_fix4[] = { 11,12,22,21,18,17,27,28,81,71,72,82,88,78,77,87 };
+		for (int i = 0;i < 16;i += 4) {
+			if (board[corner_fix4[i]] == Empty) {
+				if (corner_fix4[i + 1] == White) sum -= 450;
+				else if (corner_fix4[i + 1] == White) sum += 450;
+				else {
+					if (move(undo_buffer, corner_fix4[i + 1], White, true)) sum -= 160;
+					if (move(undo_buffer, corner_fix4[i + 1], Black, true)) sum += 160;
+				}
+
+				if (corner_fix4[i + 3] == White) sum -= 450;
+				else if (corner_fix4[i + 3] == White) sum += 450;
+				else {
+					if (move(undo_buffer, corner_fix4[i + 3], White, true)) sum -= 160;
+					if (move(undo_buffer, corner_fix4[i + 3], Black, true)) sum += 160;
+				}
+
+				if (corner_fix4[i + 2] == White) sum -= 700;
+				else if (corner_fix4[i + 2] == White) sum += 700;
+				else {
+					if (move(undo_buffer, corner_fix4[i + 2], White, true)) sum -= 500;
+					if (move(undo_buffer, corner_fix4[i + 2], Black, true)) sum += 500;
+				}
+			}
+		}
+
+		//*/
+
+
+		//		assert(root_color == White);
 		if (root_color == Black) sum = -sum;
 		//? how to count options?
-
+		*store_value_in_table = sum;
 		return sum;
 	}
 
@@ -536,11 +983,11 @@ public:
 
 Valuator valuator;
 
-const int Branch_Factor = 4;
-const int prob_depth = 6;
+#define NUM_PRIMARY 4
 
 int Board::find_move(int depth, Square color, bool use_move_count)
 {
+#ifdef SIMPLE_SEARCH
 	int empty_depth = valuator.find_empty(board);
 	int moveAt = 0;
 	if (empty_depth < 17) {
@@ -549,6 +996,25 @@ int Board::find_move(int depth, Square color, bool use_move_count)
 	}
 	else alphabeta(moveAt, depth, -INT_MAX, INT_MAX, color, color, use_move_count);
 	return moveAt;
+#else
+	int empty_depth = valuator.find_empty(board);
+	int moveAt = 0;
+	if (empty_depth < 17) {
+		printf("endgame ");
+		endgame_alphabeta(moveAt, empty_depth, -INT_MAX, INT_MAX, color, color, false);
+		return moveAt;
+	}
+	int move_collection[NUM_PRIMARY + 1];
+	if (collect_primary_alphabeta(NUM_PRIMARY, move_collection, depth - 2, color, color, use_move_count)) {
+		//undo(undo_buffer, board);
+		movelist_alphabeta(move_collection, moveAt, depth, color, color, use_move_count);
+		//alphabeta(moveAt, depth, -INT_MAX, INT_MAX, color, color, use_move_count);
+		return moveAt;
+	}
+	return 0;
+	//bool Board::collect_primary_alphabeta(int collect, int * move_collection, int depth, Square color, Square root_color, bool use_move_count)
+
+#endif
 }
 
 int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool passed)
@@ -560,13 +1026,13 @@ int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Squar
 	int inner_move;
 	if (color == root_color) { //maximizing
 		int v = -INT_MAX;
-		while (next_move(move_number, at, color)) {
+		while (next_move(move_number, at, color, depth)) {
 
 			int n = endgame_alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);
 			if (n > v) {
 				v = n;
 				move_at = at;
-				killer(move_number - 1, color);
+				killer(move_number - 1, color, depth);
 			}
 			if (v > alpha) {
 				alpha = v;
@@ -586,12 +1052,12 @@ int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Squar
 	}
 	else {//minimizing
 		int v = INT_MAX;
-		while (next_move(move_number, at, color)) {
+		while (next_move(move_number, at, color, depth)) {
 			int n = endgame_alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color);
 			if (n < v) {
 				v = n;
 				move_at = at;
-				killer(move_number - 1, color);
+				killer(move_number - 1, color, depth);
 			}
 			if (v < beta) {
 				beta = v;
@@ -611,6 +1077,176 @@ int Board::endgame_alphabeta(int &move_at, int depth, int alpha, int beta, Squar
 	}
 
 };
+
+
+
+bool Board::collect_primary_alphabeta(int collect, int * move_collection, int depth, Square color, Square root_color, bool use_move_count)
+{
+	int current_move_pos = 0;
+	do {
+		int alpha = -INT_MAX;
+		int beta = INT_MAX;
+		move_collection[0] = ++current_move_pos;
+		move_collection[current_move_pos] = 0;
+		//depth will never be zero at this level
+		int at, move_number = 0;
+		int inner_move;
+		if (color == root_color) { //maximizing
+			int v = -INT_MAX;
+			while (next_move_not_in(move_collection, move_number, at, color, depth)) {
+
+				int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+				if (n > v) {
+					//just take bonehead move out of the list if there's an alt
+					//*
+					if (current_move_pos != 1) {
+					if (at == 22 || at == 27 || at == 77 || at == 72) {
+					undo(undo_buffer, board);
+					continue;
+					}
+					int a = move_collection[1];
+					if (a == 22 || a == 27 || a == 77 || a == 72) {
+					for (int i=1;i<current_move_pos;++i)move_collection[i] = move_collection[i+1];
+					--current_move_pos;
+					move_collection[0] = current_move_pos;
+					}
+					}
+					//*/
+					v = n;
+					move_collection[current_move_pos] = at;
+					//					killer(move_number - 1, color);
+				}
+				if (v > alpha) {
+					alpha = v;
+				}
+
+				undo(undo_buffer, board);
+				if (beta <= alpha) {
+					break; //cut off
+				}
+			}
+			if (v == -INT_MAX) {
+				//				move_collection[current_move_pos] = 0;
+				v = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);//passed
+				continue;
+			}
+			continue;
+		}
+		else {//minimizing
+			int v = INT_MAX;
+			while (next_move_not_in(move_collection, move_number, at, color, depth)) {
+				int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+				//{}{}{} getting an extra undo somewhere
+				if (n < v) {
+					//just take bonehead move out of the list if there's an alt
+					//*
+					if (current_move_pos != 1) {
+					if (at == 22 || at == 27 || at == 77 || at == 72) {
+					undo(undo_buffer, board);
+					continue;
+					}
+					int a = move_collection[1];
+					if (a == 22 || a == 27 || a == 77 || a == 72) {
+					for (int i=1;i<current_move_pos;++i)move_collection[i] = move_collection[i+1];
+					--current_move_pos;
+					move_collection[0] = current_move_pos;
+					//							undo(undo_buffer, board);
+					}
+					}
+					//*/
+					v = n;
+					move_collection[current_move_pos] = at;
+					//					killer(move_number - 1, color);
+				}
+				if (v < beta) {
+					beta = v;
+				}
+				undo(undo_buffer, board);
+				if (beta <= alpha) {
+					break; //cut off
+				}
+			}
+			if (v == INT_MAX) {
+				//				move_collection[current_move_pos] = 0;
+				v = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);//passed
+				continue;
+			}
+			move_collection[current_move_pos] = at;
+			continue;
+		}
+	} while (current_move_pos < collect);
+	while (move_collection[0] != 0 && move_collection[move_collection[0]] == 0) {
+		--move_collection[0];
+	}
+	return move_collection[0] != 0;
+}
+
+int Board::movelist_alphabeta(int* move_collection, int &move_at, int depth, Square color, Square root_color, bool use_move_count)
+{
+	int alpha = -INT_MAX;
+	int beta = INT_MAX;
+	int at, move_number = 0;
+	int move_list_counter = 0;
+	int inner_move;
+	if (color == root_color) { //maximizing
+		int v = -INT_MAX;
+		while (++move_list_counter <= move_collection[0]) {
+			at = move_collection[move_list_counter];
+			assert(at >= 11 && at <= 88);
+			bool moved = move(undo_buffer, at, color);
+			assert(moved);
+			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+			if (n > v) {
+				v = n;
+				move_at = at;
+				//				killer(move_number - 1, color);
+			}
+			if (v > alpha) {
+				alpha = v;
+			}
+
+			undo(undo_buffer, board);
+			if (beta <= alpha) {
+				break; //cut off
+			}
+		}
+		if (v == -INT_MAX) {
+			move_at = 0;
+			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);//passed
+		}
+		return v;
+	}
+	else {//minimizing
+		int v = INT_MAX;
+		while (++move_list_counter <= move_collection[0]) {
+			at = move_collection[move_list_counter];
+			assert(at >= 11 && at <= 88);
+			bool moved = move(undo_buffer, at, color);
+			assert(moved);
+			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+			if (n < v) {
+				v = n;
+				move_at = at;
+				//				killer(move_number - 1, color);
+			}
+			if (v < beta) {
+				beta = v;
+			}
+			undo(undo_buffer, board);
+			if (beta <= alpha) {
+				break; //cut off
+			}
+		}
+		if (v == INT_MAX) {
+			move_at = 0;
+			return alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);//passed
+		}
+		move_at = at;
+		return v;
+	}
+
+}
+
 
 int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool use_move_count)
 {
@@ -621,13 +1257,13 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 	int inner_move;
 	if (color == root_color) { //maximizing
 		int v = -INT_MAX;
-		while (next_move(move_number, at, color)) {
+		while (next_move(move_number, at, color, depth)) {
 
 			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
 			if (n > v) {
 				v = n;
 				move_at = at;
-				killer(move_number - 1, color);
+				killer(move_number - 1, color, depth);
 			}
 			if (v > alpha) {
 				alpha = v;
@@ -646,12 +1282,12 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 	}
 	else {//minimizing
 		int v = INT_MAX;
-		while (next_move(move_number, at, color)) {
+		while (next_move(move_number, at, color, depth)) {
 			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
 			if (n < v) {
 				v = n;
 				move_at = at;
-				killer(move_number - 1, color);
+				killer(move_number - 1, color, depth);
 			}
 			if (v < beta) {
 				beta = v;
@@ -669,11 +1305,12 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 		return v;
 	}
 
-};
+}
 
 #define MAX_LOADSTRING 100
 
 Board board;
+int computers_last_move = 0;
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -790,7 +1427,9 @@ void Unselect(int prev_found_x, int prev_found_y, int verticals[9], int horizont
 		made_dc = true;
 	}
 	RECT rect = { horizontals[prev_found_x],verticals[prev_found_y],horizontals[prev_found_x + 1],verticals[prev_found_y + 1] };
-	SelectObject(hdc, (HBRUSH)GetStockObject(brush));
+	int board_index = 11 + 10 * prev_found_y + prev_found_x;
+	if (board_index == computers_last_move) SelectObject(hdc, (HBRUSH)GetStockObject(GRAY_BRUSH));
+	else SelectObject(hdc, (HBRUSH)GetStockObject(brush));
 	FillRect(hdc, &rect, NULL);
 	HPEN pen;
 
@@ -804,7 +1443,7 @@ void Unselect(int prev_found_x, int prev_found_y, int verticals[9], int horizont
 	LineTo(hdc, horizontals[prev_found_x], verticals[prev_found_y + 1]);
 	LineTo(hdc, horizontals[prev_found_x], verticals[prev_found_y]);
 
-	Square s = board.board[11 + 10 * prev_found_y + prev_found_x];
+	Square s = board.board[board_index];
 	if (s != Empty) {
 		if (s==Black) 	SelectObject(hdc, GetStockObject(BLACK_BRUSH));
 		else SelectObject(hdc, GetStockObject(WHITE_BRUSH));
@@ -887,7 +1526,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_CREATE:
 		cxChar = LOWORD(GetDialogBaseUnits());
 		cyChar = HIWORD(GetDialogBaseUnits());
-		// Create listbox and static text windows.
+		/* Create listbox and static text windows.
 		hwndList = CreateWindowEx(0,TEXT("combobox"), NULL,
 			//WS_CHILD | WS_VISIBLE | LBS_STANDARD,
 
@@ -908,6 +1547,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			//(HINSTANCE)GetWindowLong(hWnd, GWL_HINSTANCE),
 			NULL);
 		FillListBox(hwndList);
+		*/
 		return 0;
 	case WM_SETFOCUS:
 		SetFocus(hwndList);
@@ -1004,9 +1644,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			Unselect(prev_found_x, prev_found_y, verticals, horizontals, hWnd);
 			int pos = 11 + 10 * found_y + found_x;
 			if (board.move(undo_buffer, pos, Black)) {
+				computers_last_move = 0;
 				for (int x=0;x<8;++x)for(int y=0;y<8;++y)Unselect(x, y, verticals, horizontals, hWnd);
 				do {
-					if (!board.forced_move(m,White)) m = board.find_move(10, White, false);
+					if (!board.forced_move(m,White)) m = board.find_move(10, White, true);
+					computers_last_move = m;
 					board.move(undo_buffer, m, White);
 				} while (!board.can_move(Black) && board.can_move(White));
 				for (int x = 0;x<8;++x)for (int y = 0;y<8;++y)Unselect(x, y, verticals, horizontals, hWnd);
