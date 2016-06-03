@@ -1098,7 +1098,7 @@ bool Board::collect_primary_alphabeta(int collect, int * move_collection, int de
 				int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
 				if (n > v) {
 					//just take bonehead move out of the list if there's an alt
-					//*
+					/*
 					if (current_move_pos != 1) {
 					if (at == 22 || at == 27 || at == 77 || at == 72) {
 					undo(undo_buffer, board);
@@ -1139,7 +1139,7 @@ bool Board::collect_primary_alphabeta(int collect, int * move_collection, int de
 				//{}{}{} getting an extra undo somewhere
 				if (n < v) {
 					//just take bonehead move out of the list if there's an alt
-					//*
+					/*
 					if (current_move_pos != 1) {
 					if (at == 22 || at == 27 || at == 77 || at == 72) {
 					undo(undo_buffer, board);
