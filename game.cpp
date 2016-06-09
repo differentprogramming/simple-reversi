@@ -2873,7 +2873,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_COMMAND:
 	{
 		int wmId = LOWORD(wParam);
-		HMENU hMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDC_GAME));
+		HMENU //hMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDC_GAME));
+		hMenu = GetMenu(hWnd);
 		// Parse the menu selections:
 		switch (wmId)
 		{
