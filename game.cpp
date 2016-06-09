@@ -52,6 +52,53 @@ typedef Safety CompressedBoard[8];
 
 #endif 
 
+typedef Square BoardArray[100];
+struct ValTriple { int pos; int dir; int len; };
+const ValTriple Valuations[] =
+{
+	{ 81,1,8 },{ 71,1,8 },
+	{ 61,1,8 },{ 51,1,8 },
+	{ 41,1,8 },{ 31,1,8 },
+	{ 21,1,8 },{ 11,1,8 },
+	{ 81,11,1 },{ 18,11,1 },
+	{ 71,11,2 },{ 17,11,2 },
+	{ 61,11,3 },{ 16,11,3 },
+	{ 51,11,4 },{ 15,11,4 },
+	{ 41,11,5 },{ 14,11,5 },
+	{ 31,11,6 },{ 13,11,6 },
+	{ 21,11,7 },{ 12,11,7 },
+	{ 11,9,1 },{ 88,9,1 },
+	{ 11,10,8 },{ 12,10,8 },
+	{ 12,9,2 },{ 78,9,2 },
+	{ 13,9,3 },{ 68,9,3 },
+	{ 13,10,8 },{ 14,10,8 },
+	{ 14,9,4 },{ 58,9,4 },
+	{ 15,9,5 },{ 48,9,5 },
+	{ 15,10,8 },{ 16,10,8 },
+	{ 16,9,6 },{ 38,9,6 },
+	{ 17,9,7 },{ 28,9,7 },
+	{ 17,10,8 },{ 18,10,8 },
+	{ 18,9,8 },
+	{ 11,11,8 },
+	{ 0,0,0 }
+};
+Safety compress_a[256];
+Safety compress_b[256];
+void init_compress()
+{
+	for (int c = 0;c<256;++c)
+		compress_a[c] = (c & 3) + ((((c & 0xc) * 12288) + ((c & 0x30) * 9216)
+			+ ((c & 0xc0) * 6912)) >> 14);
+
+	for (int c = 256;c < 65536;c += 256)
+		compress_b[c >> 8] = ((((c & 0x300) * 5184)
+			+ ((c & 0xc00) * 3888) + ((c & 0x3000) * 2916) + ((c & 0xc000) * 2187)) >> 14);
+}
+//reduce cache pressure by converting base 3 index to compressed form
+inline Safety compress3(int c)
+{
+	return compress_a[c & 255] + compress_b[c >> 8];
+}
 
 struct TranspositionEntry {
 	CompressedBoard b;
@@ -69,10 +116,28 @@ struct TranspositionEntry {
 		return b[0] == o[0] && b[1] == o[1] && b[2] == o[2] && b[3] == o[3] && b[4] == o[4] && b[5] == o[5] && b[6] == o[6] && b[7] == o[7];
 	}
 	static bool find_and_fill(int *&to_store, CompressedBoard o);
+	static bool find_and_fill(int *&to_store, BoardArray o);
 };
 
 TranspositionEntry TranspositionTable[1 << TranspositionTableLenLn2];
 //static 
+bool TranspositionEntry::find_and_fill(int *&to_store, BoardArray in)
+{
+	CompressedBoard cbs;
+	for (int i = 0;i < 8; i += 2) {
+		int c = 0;
+		int c2 = 0;
+
+		for (int j = Valuations[i].pos, j2 = Valuations[1 + i].pos, k = 1;k <= Valuations[i].len;++k, j += Valuations[i].dir, j2 += Valuations[i].dir) {
+			c = (c << 2) + in[j];
+			c2 = (c2 << 2) + in[j2];
+		}
+
+		cbs[i] = compress3(c);
+		cbs[i + 1] = compress3(c2);
+	}
+	return find_and_fill(to_store, cbs);
+}
 bool TranspositionEntry::find_and_fill(int *&to_store, CompressedBoard o)
 {
 	int h = hash(o);
@@ -103,63 +168,16 @@ const Square Black = 2;
 const int simple_sum[] = { 0,1,-1,0,0 };
 const int empty_sum[5] = { 1,0,0,0,0 };
 
-typedef Square BoardArray[100];
 typedef Square BoardLineArray[10];
 const int NUMDIR = 8;
 const int Directions[] = { 11,9,-11,-9,1,-1,10,-10,0 };
 const int LineDirections[] = { 1,-1,0 };
 
-struct ValTriple { int pos; int dir; int len; };
 Safety *safety[8];
 //paired so direction and len are the same except the last pair where only len is the same
-const ValTriple Valuations[] =
-{
-	{ 81,1,8 },{ 71,1,8 },
-	{ 61,1,8 },{ 51,1,8 },
-	{ 41,1,8 },{ 31,1,8 },
-	{ 21,1,8 },{ 11,1,8 },
-	{ 81,11,1 },{ 18,11,1 },
-	{ 71,11,2 },{ 17,11,2 },
-	{ 61,11,3 },{ 16,11,3 },
-	{ 51,11,4 },{ 15,11,4 },
-	{ 41,11,5 },{ 14,11,5 },
-	{ 31,11,6 },{ 13,11,6 },
-	{ 21,11,7 },{ 12,11,7 },
-	{ 11,9,1 },{ 88,9,1 },
-	{ 11,10,8 },{ 12,10,8 },
-	{ 12,9,2 },{ 78,9,2 },
-	{ 13,9,3 },{ 68,9,3 },
-	{ 13,10,8 },{ 14,10,8 },
-	{ 14,9,4 },{ 58,9,4 },
-	{ 15,9,5 },{ 48,9,5 },
-	{ 15,10,8 },{ 16,10,8 },
-	{ 16,9,6 },{ 38,9,6 },
-	{ 17,9,7 },{ 28,9,7 },
-	{ 17,10,8 },{ 18,10,8 },
-	{ 18,9,8 },
-	{ 11,11,8 },
-	{ 0,0,0 }
-};
 
 
 
-Safety compress_a[256];
-Safety compress_b[256];
-void init_compress()
-{
-	for (int c = 0;c<256;++c)
-		compress_a[c] = (c & 3) + ((((c & 0xc) * 12288) + ((c & 0x30) * 9216)
-			+ ((c & 0xc0) * 6912)) >> 14);
-
-	for (int c = 256;c < 65536;c += 256)
-		compress_b[c >> 8] = ((((c & 0x300) * 5184)
-			+ ((c & 0xc00) * 3888) + ((c & 0x3000) * 2916) + ((c & 0xc000) * 2187)) >> 14);
-}
-//reduce cache pressure by converting base 3 index to compressed form
-inline Safety compress3(int c)
-{
-	return compress_a[c & 255] + compress_b[c >> 8];
-}
 
 
 /*x,0,x,x,x,x,x,x,x,2,4,6*/
@@ -1930,7 +1948,7 @@ public:
 			else return;
 		} while (true);
 	}
-			};
+		};
 
 //note is singleton
 class Valuator
@@ -2218,6 +2236,7 @@ public:
 #define NUM_PRIMARY 4
 #define NUM_PRIMARY_MAX (2*NUM_PRIMARY)
 
+
 	const int inner_corners[4] = { 22,27,72,77 };
 	const int corners[4] = { 11,18,81,88 };
 	void remove_dangerous_moves(int *moves, BoardArray in, Square color)
@@ -2245,7 +2264,8 @@ public:
 			fast_move(undo_buffer, moves[i], color, in);
 			bool dangerous = false;
 			for (int c = 0;c < 4;++c) {
-				if (corners_not_taken[c] && inner_corners_not_taken[c] && in[inner_corners[c]] == color && in[corners[c]] != color) {
+				if (corners_not_taken[c] && inner_corners_not_taken[c] && in[inner_corners[c]] == color && in[corners[c]] != color
+					) {
 					dangerous = true;
 					++count;
 					break;
@@ -2264,7 +2284,7 @@ public:
 			if (!danger[i]) {
 				++moves[0];
 				moves[moves[0]] = copy[i];
-			}
+		}
 
 	}
 };
@@ -2508,7 +2528,7 @@ int Board::movelist_alphabeta(int* move_collection, int &move_at, int depth, Squ
 			}
 			if (v < beta) {
 				beta = v;
-			}
+		}
 			undo(undo_buffer, board);
 			if (beta <= alpha) {
 				break; //cut off
@@ -2522,7 +2542,7 @@ int Board::movelist_alphabeta(int* move_collection, int &move_at, int depth, Squ
 		return v;
 }
 
-		}
+	}
 
 
 int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color, Square root_color, bool use_move_count)
@@ -2539,8 +2559,16 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 	if (color == root_color) { //maximizing
 		int v = -INT_MAX;
 		while (next_move(move_number, at, color, depth)) {
-
-			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+			int *to_store, n;
+			//{}{}{} rewrite to fill only on no cut wait would that have to be 
+			//recursive?  Needs more research
+//			if (TranspositionEntry::find_and_fill(to_store, board, depth)) {
+//				n = *to_store;
+//			}
+//			else {
+				n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+//				*to_store = n;
+//			}
 			if (n > v) {
 				v = n;
 				move_at = at;
@@ -2564,7 +2592,14 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 	else {//minimizing
 		int v = INT_MAX;
 		while (next_move(move_number, at, color, depth)) {
-			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+			int *to_store, n;
+//			if (TranspositionEntry::find_and_fill(to_store, board, depth)) {
+//				n = *to_store;
+//			}
+//			else {
+				n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+//				*to_store = n;
+//			}
 			if (n < v) {
 				v = n;
 				move_at = at;
@@ -2785,6 +2820,7 @@ void FillListBox(HWND hwndList)
 //  WM_DESTROY  - post a quit message and return
 //
 //
+int global_search_depth = 10;
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	HPEN pen;
@@ -2837,11 +2873,44 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_COMMAND:
 	{
 		int wmId = LOWORD(wParam);
+		HMENU hMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDC_GAME));
 		// Parse the menu selections:
 		switch (wmId)
 		{
 		case IDM_ABOUT:
 			DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+			break;
+		case ID_GAME_FAST:
+			CheckMenuItem(hMenu, ID_GAME_FAST, MF_CHECKED);
+			CheckMenuItem(hMenu, ID_GAME_STRONG, MF_UNCHECKED);
+			global_search_depth = 10;
+			/*
+			CheckMenuRadioItem(
+				(HMENU)wParam,
+				ID_GAME_FAST,
+				ID_GAME_STRONG,
+				ID_GAME_FAST,
+				MF_BYCOMMAND
+			);
+			*/
+			break;
+		case ID_GAME_STRONG:
+			CheckMenuItem(hMenu, ID_GAME_FAST, MF_UNCHECKED);
+			CheckMenuItem(hMenu, ID_GAME_STRONG, MF_CHECKED);
+			global_search_depth = 11;
+				/*CheckMenuRadioItem(
+				(HMENU)lParam,
+				ID_GAME_FAST,
+				ID_GAME_STRONG,
+				ID_GAME_STRONG,
+				MF_BYCOMMAND
+			);*/
+			break;
+		case ID_FILE_TAKEBACK:
+
+			board.undo(undo_buffer, board.board);
+			board.undo(undo_buffer, board.board);
+			InvalidateRect(hWnd, NULL, TRUE);
 			break;
 		case IDM_EXIT:
 			DestroyWindow(hWnd);
@@ -2928,8 +2997,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			if (board.move(undo_buffer, pos, Black)) {
 				computers_last_move = 0;
 				for (int x=0;x<8;++x)for(int y=0;y<8;++y)Unselect(x, y, verticals, horizontals, hWnd);
+				bool first = true;
 				do {
-					if (!board.forced_move(m,White)) m = board.find_move(10, White, true);
+					if (!first )MessageBox(hWnd, L"You have to forfit a move", L"Forced moved", MB_OK);
+					first = false;
+					if (!board.forced_move(m,White)) m = board.find_move(global_search_depth, White, true);
 					computers_last_move = m;
 					board.move(undo_buffer, m, White);
 				} while (!board.can_move(Black) && board.can_move(White));

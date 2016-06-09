@@ -49,66 +49,8 @@ typedef Safety CompressedBoard[8];
 
 #endif 
 
-
-struct TranspositionEntry {
-	CompressedBoard b;
-	int value;
-	TranspositionEntry() :value(0)
-	{
-		b[0] = b[1] = b[2] = b[3] = b[4] = b[5] = b[6] = b[7] = 0;
-	}
-
-	static int hash(CompressedBoard o)
-	{//all numbers are prime
-		return ((1 << TranspositionTableLenLn2) - 1)&(o[0] * PRIME1 + o[1] * PRIME2 + o[2] * PRIME3 + o[3] * PRIME4 + o[4] * PRIME5 + o[5] * PRIME6 + o[6] * PRIME7 + o[7] * PRIME8);
-	}
-	bool equal(CompressedBoard o) {
-		return b[0] == o[0] && b[1] == o[1] && b[2] == o[2] && b[3] == o[3] && b[4] == o[4] && b[5] == o[5] && b[6] == o[6] && b[7] == o[7];
-	}
-	static bool find_and_fill(int *&to_store, CompressedBoard o);
-};
-
-TranspositionEntry TranspositionTable[1 << TranspositionTableLenLn2];
-//static 
-bool TranspositionEntry::find_and_fill(int *&to_store, CompressedBoard o)
-{
-	int h = hash(o);
-	TranspositionEntry &t = TranspositionTable[h];
-	to_store = &t.value;
-
-	if (t.equal(o)) {
-		return true;
-	}
-	t.b[0] = o[0];
-	t.b[1] = o[1];
-	t.b[2] = o[2];
-	t.b[3] = o[3];
-	t.b[4] = o[4];
-	t.b[5] = o[5];
-	t.b[6] = o[6];
-	t.b[7] = o[7];
-	return false;
-}
-
-const int QUIESCENT_DEPTH = 0;
-
-const Square Out = 4;
-const Square Empty = 0;
-const Square White = 1;
-const Square Black = 2;
-//black p
-const int simple_sum[] = { 0,1,-1,0,0 };
-const int empty_sum[5] = { 1,0,0,0,0 };
-
 typedef Square BoardArray[100];
-typedef Square BoardLineArray[10];
-const int NUMDIR = 8;
-const int Directions[] = { 11,9,-11,-9,1,-1,10,-10,0 };
-const int LineDirections[] = { 1,-1,0 };
-
 struct ValTriple { int pos; int dir; int len; };
-Safety *safety[8];
-//paired so direction and len are the same except the last pair where only len is the same
 const ValTriple Valuations[] =
 {
 	{ 81,1,8 },{ 71,1,8 },
@@ -137,9 +79,6 @@ const ValTriple Valuations[] =
 	{ 11,11,8 },
 	{ 0,0,0 }
 };
-
-
-
 Safety compress_a[256];
 Safety compress_b[256];
 void init_compress()
@@ -157,6 +96,87 @@ inline Safety compress3(int c)
 {
 	return compress_a[c & 255] + compress_b[c >> 8];
 }
+
+struct TranspositionEntry {
+	CompressedBoard b;
+	int value;
+	int depth;
+	TranspositionEntry() :value(0),depth(0)
+	{
+		b[0] = b[1] = b[2] = b[3] = b[4] = b[5] = b[6] = b[7] = 0;
+	}
+
+	static int hash(CompressedBoard o)
+	{//all numbers are prime
+		return ((1 << TranspositionTableLenLn2) - 1)&(o[0] * PRIME1 + o[1] * PRIME2 + o[2] * PRIME3 + o[3] * PRIME4 + o[4] * PRIME5 + o[5] * PRIME6 + o[6] * PRIME7 + o[7] * PRIME8);
+	}
+	bool equal(CompressedBoard o,int d) {
+		return depth==d && b[0] == o[0] && b[1] == o[1] && b[2] == o[2] && b[3] == o[3] && b[4] == o[4] && b[5] == o[5] && b[6] == o[6] && b[7] == o[7];
+	}
+	static bool find_and_fill(int *&to_store, CompressedBoard o, int d);
+	static bool find_and_fill(int *&to_store, BoardArray o, int d);
+};
+
+TranspositionEntry TranspositionTable[1 << TranspositionTableLenLn2];
+//static 
+bool TranspositionEntry::find_and_fill(int *&to_store, BoardArray in, int d)
+{
+	CompressedBoard cbs;
+	for (int i = 0;i < 8; i += 2) {
+		int c = 0;
+		int c2 = 0;
+
+		for (int j = Valuations[i].pos, j2 = Valuations[1 + i].pos, k = 1;k <= Valuations[i].len;++k, j += Valuations[i].dir, j2 += Valuations[i].dir) {
+			c = (c << 2) + in[j];
+			c2 = (c2 << 2) + in[j2];
+		}
+
+		cbs[i] = compress3(c);
+		cbs[i + 1] = compress3(c2);
+	}
+	return find_and_fill(to_store, cbs, d);
+}
+bool TranspositionEntry::find_and_fill(int *&to_store, CompressedBoard o, int d)
+{
+	int h = hash(o);
+	TranspositionEntry &t = TranspositionTable[h];
+	to_store = &t.value;
+
+	if (t.equal(o,d)) {
+		return true;
+	}
+	t.depth = d;
+	t.b[0] = o[0];
+	t.b[1] = o[1];
+	t.b[2] = o[2];
+	t.b[3] = o[3];
+	t.b[4] = o[4];
+	t.b[5] = o[5];
+	t.b[6] = o[6];
+	t.b[7] = o[7];
+	return false;
+}
+
+const int QUIESCENT_DEPTH = 0;
+
+const Square Out = 4;
+const Square Empty = 0;
+const Square White = 1;
+const Square Black = 2;
+//black p
+const int simple_sum[] = { 0,1,-1,0,0 };
+const int empty_sum[5] = { 1,0,0,0,0 };
+
+typedef Square BoardLineArray[10];
+const int NUMDIR = 8;
+const int Directions[] = { 11,9,-11,-9,1,-1,10,-10,0 };
+const int LineDirections[] = { 1,-1,0 };
+
+Safety *safety[8];
+//paired so direction and len are the same except the last pair where only len is the same
+
+
+
 
 
 /*x,0,x,x,x,x,x,x,x,2,4,6*/
@@ -2068,7 +2088,7 @@ public:
 		}
 
 
-		if (TranspositionEntry::find_and_fill(store_value_in_table, cbs)) return *store_value_in_table;
+		if (TranspositionEntry::find_and_fill(store_value_in_table, cbs,0)) return *store_value_in_table;
 		for (int i = 0;Valuations[i].pos; i += 2) {
 			int c;
 			int c2;
@@ -2215,10 +2235,12 @@ public:
 #define NUM_PRIMARY 4
 #define NUM_PRIMARY_MAX (2*NUM_PRIMARY)
 
+
 	const int inner_corners[4] = { 22,27,72,77 };
+	const int corners[4] = { 11,18,81,88 };
 	void remove_dangerous_moves(int *moves, BoardArray in, Square color)
 	{
-		
+
 		//11 12 13 14 15 16 17 18
 		//21 22 23 24 25 26 27 28
 		//31 32 33 34 35 36 37 38
@@ -2241,7 +2263,7 @@ public:
 			fast_move(undo_buffer, moves[i], color, in);
 			bool dangerous = false;
 			for (int c = 0;c < 4;++c) {
-				if (corners_not_taken[c] && inner_corners_not_taken[c] && in[inner_corners[c]] == color) {
+				if (corners_not_taken[c] && inner_corners_not_taken[c] && in[inner_corners[c]] == color && in[corners[c]] != color) {
 					dangerous = true;
 					++count;
 					break;
@@ -2273,7 +2295,7 @@ int Board::find_move(int depth, Square color, bool use_move_count)
 #ifdef SIMPLE_SEARCH
 	int empty_depth = valuator.find_empty(board);
 	int moveAt = 0;
-	if (empty_depth < 19) {
+	if (empty_depth < 17) {
 		printf("endgame ");
 		endgame_alphabeta(moveAt, empty_depth, -INT_MAX, INT_MAX, color, color, false);
 	}
@@ -2535,8 +2557,14 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 	if (color == root_color) { //maximizing
 		int v = -INT_MAX;
 		while (next_move(move_number, at, color, depth)) {
-
-			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+			int *to_store,n;
+//			if (TranspositionEntry::find_and_fill(to_store, board, depth)) {
+//				n = *to_store;
+//			}
+//			else {
+				n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+//				*to_store = n;
+//			}
 			if (n > v) {
 				v = n;
 				move_at = at;
@@ -2560,7 +2588,14 @@ int Board::alphabeta(int &move_at, int depth, int alpha, int beta, Square color,
 	else {//minimizing
 		int v = INT_MAX;
 		while (next_move(move_number, at, color, depth)) {
-			int n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+			int *to_store, n;
+//			if (TranspositionEntry::find_and_fill(to_store, board, depth)) {
+//				n = *to_store;
+//			}
+//			else {
+				n = alphabeta(inner_move, depth - 1, alpha, beta, other_color(color), root_color, use_move_count);
+//				*to_store = n;
+//			}
 			if (n < v) {
 				v = n;
 				move_at = at;
@@ -2608,7 +2643,7 @@ int main()
 			black_passed = true;
 		}
 			else {
-				b.input(Black, "b:");
+				b.input(Black, "b9");
 			black_passed = false;
 		}
 		//increment_killers();
@@ -2622,7 +2657,7 @@ int main()
 			white_passed = true;
 		}
 		else {
-			b.input(White, "b:");
+			b.input(White, "b9");
 			white_passed = false;
 		}
 		//increment_killers();
